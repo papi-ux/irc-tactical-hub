@@ -1,0 +1,75 @@
+; ============================================================
+; mIRC TACTICAL ENGINE v1.0 (Universal / Lightweight)
+; ============================================================
+; This script handles the "Active" tasks that Python cannot do:
+; 1. Auto-Queueing when the bot reconnects (Netsplit protection).
+; 2. Chat shortcuts (/rq, /request_pos).
+; ============================================================
+
+on *:LOAD: {
+  echo -a  10[HUD]  12Tactical Engine Loaded.
+  echo -a  10[HUD]  4IMPORTANT:  12Type  4/hud_setup  12to configure your target channel and bot!
+  
+  ; Default Bridge Path
+  set %hud_bridge C:\speedtest
+}
+
+alias hud_setup {
+  ; --- CONFIGURATION WIZARD ---
+  echo -a  10[HUD]  12Entering Setup Mode...
+  
+  var %c = $input(Enter the Interview Channel (e.g. #red-invites):, e, HUD Configuration)
+  if (!%c) { echo -a  4[ERROR]  12Setup cancelled. | return }
+  set %hud_chan %c
+  
+  var %b = $input(Enter the Bot Name (e.g. Gatekeeper):, e, HUD Configuration)
+  if (!%b) { echo -a  4[ERROR]  12Setup cancelled. | return }
+  set %hud_bot %b
+  
+  echo -a  10[HUD]  12Configuration Saved!
+  echo -a  10[HUD]  12Channel:  4 %hud_chan
+  echo -a  10[HUD]  12Bot Name:  4 %hud_bot
+}
+
+; --- AUTO-QUEUE LOGIC (Netsplit Recovery) ---
+on *:JOIN:#: {
+  ; 1. Check if this is the monitored channel
+  if ($chan == %hud_chan) {
+    
+    ; 2. Check if the joining user matches the Bot Name
+    if ($regex($nick, $+(/^[~&@%+]*,\Q,%hud_bot,\E,$/i))) {
+      
+      ; Play alert sound
+      splay -q $mircdirsounds\alert.wav
+      
+      ; Read the saved link from Python HUD
+      var %link_file = $+(%hud_bridge,\queue_link.txt)
+      
+      if ($exists(%link_file)) {
+        var %link = $read(%link_file, n, 1)
+        if (%link) {
+          echo -a  13* BOT RECONNECTED (%hud_bot): Auto-queueing in 5s...
+          .timerREQUEUE 1 5 msg $chan !queue %link
+        }
+      }
+    }
+  }
+}
+
+; --- COMMAND ALIASES ---
+
+; /rq - Manually send your saved queue link
+alias rq { 
+  var %l = $read($+(%hud_bridge,\queue_link.txt), n, 1)
+  if (%l) { 
+    if (%hud_chan) { msg %hud_chan !queue %l }
+    else { echo -a  4[ERROR]  12Run /hud_setup first! }
+  } 
+  else { echo -a  4[ERROR]  12No link saved! Run Auto-Test in HUD first. }
+}
+
+; /request_pos - Ask bot for position
+alias request_pos { 
+  if (%hud_bot) { msg %hud_bot !position }
+  else { echo -a  4[ERROR]  12Run /hud_setup first! }
+}
