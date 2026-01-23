@@ -13,20 +13,27 @@ DEFAULT_CONFIG = {
     "ntfy_topic": "interview_alerts",
     "bot_name": "Gatekeeper",
     "client_title": "mIRC",
-    "user_nick": ""
+    "user_nick": "",
+    # Default Priorities
+    "prio_queue": "low",       # Queue moving (other people)
+    "prio_mention": "urgent",  # You are mentioned
+    "prio_top5": "high",       # You are in top 5
+    "prio_netsplit": "high"    # Server split
 }
 
-# Pre-compile Regex Patterns for Performance
+# Pre-compile Regex Patterns
 RE_POSITION = re.compile(r"position\s+(\d+)\s+of\s+(\d+)", re.IGNORECASE)
 RE_CURRENTLY = re.compile(r"currently\s+#(\d+)", re.IGNORECASE)
 RE_NETSPLIT = re.compile(r"(\*\.net \*\.split|Quit: \*\.net \*\.split)", re.IGNORECASE)
 RE_KICK = re.compile(r"kicked by", re.IGNORECASE)
 RE_COLOR_STRIP = re.compile(r'[\x02\x0F\x16\x1F]|\x03\d{0,2}(?:,\d{0,2})?')
 
-# Check for requests library
+# Check for requests library and setup Retry Logic
 HAS_REQUESTS = False
 try:
     import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
     HAS_REQUESTS = True
 except ImportError:
     pass
@@ -47,7 +54,7 @@ def focus_window(partial_title):
             title = buff.value
             if partial_title.lower() in title.lower():
                 found_hwnd = hwnd
-                return 0 # Stop enumeration
+                return 0 
         return 1
 
     CMPFUNC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
@@ -55,7 +62,7 @@ def focus_window(partial_title):
     
     if found_hwnd:
         if user32.IsIconic(found_hwnd):
-            user32.ShowWindow(found_hwnd, 9) # SW_RESTORE
+            user32.ShowWindow(found_hwnd, 9) 
         user32.SetForegroundWindow(found_hwnd)
         return True
     return False
@@ -112,8 +119,7 @@ class InterviewDatabase:
             dt_ts = datetime.fromisoformat(ts)
         except:
             dt_ts = datetime.now()
-            
-        # 12-hour fuzzy deduplication window
+        
         window_start = (dt_ts - timedelta(hours=12)).isoformat()
         window_end = (dt_ts + timedelta(hours=12)).isoformat()
 
@@ -170,7 +176,7 @@ class SettingsDialog(tk.Toplevel):
     def __init__(self, parent, config, callback):
         super().__init__(parent)
         self.title("Settings")
-        self.geometry("700x600")
+        self.geometry("750x700")
         self.configure(bg="#1a1a1a")
         self.config = config
         self.callback = callback
@@ -178,33 +184,53 @@ class SettingsDialog(tk.Toplevel):
 
     def create_widgets(self):
         pad = {'padx': 15, 'pady': 5}
+        PRIORITIES = ["min", "low", "default", "high", "urgent"]
         
-        tk.Label(self, text="SYSTEM CONFIGURATION", bg="#1a1a1a", fg="#00ff00", font=("Consolas", 14, "bold")).pack(pady=15)
+        tk.Label(self, text="SYSTEM CONFIGURATION", bg="#1a1a1a", fg="#00ff00", font=("Consolas", 14, "bold")).pack(pady=10)
         
         fields = [
             ("Bridge Directory:", "bridge_dir"),
             ("IRC Client Log File:", "irc_log"),
-            ("Bot Name (e.g. Gatekeeper):", "bot_name"),
-            ("Window Title (e.g. mIRC):", "client_title"),
+            ("Bot Name:", "bot_name"),
+            ("Window Title:", "client_title"),
             ("Your Nickname:", "user_nick"),
             ("Ntfy Topic:", "ntfy_topic")
         ]
 
         self.entries = {}
-
         for label_text, config_key in fields:
-            tk.Label(self, text=label_text, bg="#1a1a1a", fg="#00ffff", font=("Consolas", 10, "bold")).pack(anchor="w", padx=15, pady=(5, 0))
-            
+            tk.Label(self, text=label_text, bg="#1a1a1a", fg="#00ffff", font=("Consolas", 10, "bold")).pack(anchor="w", padx=15, pady=(2, 0))
             frame = tk.Frame(self, bg="#1a1a1a")
             frame.pack(fill=tk.X, **pad)
-            
             entry = tk.Entry(frame, width=60, bg="#333", fg="white", font=("Consolas", 9))
             entry.insert(0, self.config.get(config_key, ""))
             entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
             self.entries[config_key] = entry
-            
             if config_key == "irc_log":
                 tk.Button(frame, text="Browse", command=self.browse_log, bg="#444", fg="white", font=("Consolas", 9)).pack(side=tk.RIGHT, padx=5)
+
+        ttk.Separator(self, orient='horizontal').pack(fill='x', pady=15)
+        
+        tk.Label(self, text="NOTIFICATION PRIORITIES", bg="#1a1a1a", fg="#ffaa00", font=("Consolas", 14, "bold")).pack(pady=5)
+        prio_frame = tk.Frame(self, bg="#1a1a1a")
+        prio_frame.pack(fill=tk.X, padx=15, pady=5)
+        
+        prio_fields = [
+            ("Queue Moving (Other users):", "prio_queue"),
+            ("Mention Alert (Your Name):", "prio_mention"),
+            ("Top 5 Alert:", "prio_top5"),
+            ("Netsplit Alert:", "prio_netsplit")
+        ]
+        
+        self.combos = {}
+        for idx, (label, key) in enumerate(prio_fields):
+            row_frame = tk.Frame(prio_frame, bg="#1a1a1a")
+            row_frame.pack(fill=tk.X, pady=2)
+            tk.Label(row_frame, text=label, bg="#1a1a1a", fg="#cccccc", font=("Consolas", 10), width=30, anchor="w").pack(side=tk.LEFT)
+            cb = ttk.Combobox(row_frame, values=PRIORITIES, state="readonly", width=15)
+            cb.set(self.config.get(key, "default"))
+            cb.pack(side=tk.LEFT)
+            self.combos[key] = cb
 
         tk.Button(self, text="💾 SAVE SETTINGS", command=self.save, bg="#00ff00", fg="black", font=("Consolas", 11, "bold"), pady=5).pack(pady=20)
 
@@ -216,6 +242,8 @@ class SettingsDialog(tk.Toplevel):
 
     def save(self):
         new_conf = {key: entry.get().strip() for key, entry in self.entries.items()}
+        for key, cb in self.combos.items():
+            new_conf[key] = cb.get()
         self.callback(new_conf)
         self.destroy()
 
@@ -223,8 +251,8 @@ class SettingsDialog(tk.Toplevel):
 class UniversalHUD(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("mirc-tactical-hud v5.11 - MASS KICK DETECTOR")
-        self.geometry("1100x900") 
+        self.title("mirc-tactical-hud v5.17 - OPTIMIZED")
+        self.geometry("1100x950") 
         self.configure(bg="#0a0a0a")
         self.attributes('-topmost', True)
         
@@ -238,12 +266,11 @@ class UniversalHUD(tk.Tk):
         self.top5_alert_sent = False
         
         self.last_netsplit_alert = 0 
-        self.kick_counter = [] # List of timestamps
+        self.kick_counter = []
         self.parser_running = False
+        self.last_clipboard = "" 
         
         self.setup_ui()
-        
-        # Start Background Threads
         self.start_monitoring()
         self.start_log_parser()
 
@@ -269,17 +296,13 @@ class UniversalHUD(tk.Tk):
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
             try:
-                with open(CONFIG_FILE, "r") as f:
-                    self.config = json.load(f)
-            except:
-                self.config = DEFAULT_CONFIG
-        else:
-            self.config = DEFAULT_CONFIG
+                with open(CONFIG_FILE, "r") as f: self.config = json.load(f)
+            except: self.config = DEFAULT_CONFIG
+        else: self.config = DEFAULT_CONFIG
 
     def save_config(self, new_config):
         self.config = new_config
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(self.config, f)
+        with open(CONFIG_FILE, "w") as f: json.dump(self.config, f)
         self.init_paths()
         self.log("SYSTEM: Configuration updated.")
         self.reload_parser() 
@@ -293,8 +316,7 @@ class UniversalHUD(tk.Tk):
         self.user_nick = self.config.get("user_nick", DEFAULT_CONFIG["user_nick"])
         
         try:
-            if not os.path.exists(self.bridge_dir):
-                os.makedirs(self.bridge_dir, exist_ok=True)
+            if not os.path.exists(self.bridge_dir): os.makedirs(self.bridge_dir, exist_ok=True)
         except: pass
 
         self.st_json = os.path.join(self.bridge_dir, "st_result.json")
@@ -328,6 +350,7 @@ class UniversalHUD(tk.Tk):
         self.ns_var = tk.StringVar(value="0")
         add_stat_box(top_bar, "NETSPLITS", self.ns_var, "orange", 40)
 
+        # Link Frame
         link_frame = tk.Frame(self.tab_hud, bg="#0a0a0a", pady=5)
         link_frame.pack(fill=tk.X, padx=10)
         tk.Label(link_frame, text="MANUAL SPEEDTEST LINK:", bg="#0a0a0a", fg="#00ffff", font=("Consolas", 10)).pack(side=tk.LEFT)
@@ -336,23 +359,46 @@ class UniversalHUD(tk.Tk):
         tk.Button(link_frame, text="💾 SAVE", command=self.save_manual_link, bg="#00ffff", fg="black", font=("Consolas", 9, "bold")).pack(side=tk.LEFT, padx=5)
         tk.Button(link_frame, text="🌐 WEB", command=lambda: webbrowser.open("https://www.speedtest.net/"), bg="#333", fg="#fff", font=("Consolas", 9)).pack(side=tk.LEFT, padx=5)
 
-        btn_frame = tk.Frame(self.tab_hud, bg="#0a0a0a")
-        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+        # --- QUICK ACTIONS ---
+        action_lbl = tk.LabelFrame(self.tab_hud, text=" QUICK ACTIONS ", bg="#0a0a0a", fg="#00ff00", font=("Consolas", 10, "bold"))
+        action_lbl.pack(fill=tk.X, padx=10, pady=5)
         
-        buttons = [
-            ("🎯 FOCUS CLIENT", self.focus_client, "#cc0000", "white"),
-            ("🚀 AUTO-TEST", self.run_and_auto_copy, "#0000AA", "white"),
-            ("⚡ CLI ONLY", self.run_st, "#333", "#555555"),
-            ("📋 COPY QUEUE", self.copy_queue_cmd, "#333", "#00ff00"),
-            ("🔄 REFRESH POS", self.req_pos, "#333", "#00ff00"),
-            ("🔔 TEST NTFY", self.test_ntfy, "#333", "#FFA500")
+        q_btns = [
+            ("🎯 FOCUS CLIENT", self.focus_client, "#cc0000"),
+            ("🚀 AUTO-TEST", self.run_and_auto_copy, "#0000AA"),
+            ("📋 COPY !QUEUE", self.copy_queue_cmd, "#00ff00"), 
+            ("⚡ CLI ONLY", self.run_st, "#555555"),
+            ("🛡️ SYS CHECK", self.check_system_health, "#008888")
         ]
-        for txt, cmd, bg, fg in buttons:
-            tk.Button(btn_frame, text=txt, command=cmd, bg=bg, fg=fg, font=("Consolas", 9, "bold") if "bold" in txt else ("Consolas", 9)).pack(side=tk.LEFT, padx=5)
-            
-        tk.Button(btn_frame, text="♻️ RELOAD", command=self.reload_parser, bg="#444", fg="#00ffff", font=("Consolas", 9, "bold")).pack(side=tk.RIGHT, padx=5)
-        tk.Button(btn_frame, text="⚙️ SETTINGS", command=self.open_settings, bg="#555", fg="#fff", font=("Consolas", 9)).pack(side=tk.RIGHT, padx=5)
+        
+        for txt, cmd, fg in q_btns:
+            tk.Button(action_lbl, text=txt, command=cmd, bg="#333", fg=fg if fg else "white", font=("Consolas", 9, "bold")).pack(side=tk.LEFT, padx=5, pady=5)
 
+        # --- MIRC SCRIPT ALIASES ---
+        alias_lbl = tk.LabelFrame(self.tab_hud, text=" mIRC SCRIPT ALIASES ", bg="#0a0a0a", fg="#00ffff", font=("Consolas", 10, "bold"))
+        alias_lbl.pack(fill=tk.X, padx=10, pady=5)
+        
+        m_btns = [
+            ("🔄 CHECK POS (/request_pos)", "/request_pos", "#008800"),
+            ("🔁 RE-QUEUE (/rq)", "/rq", "#008888"),
+            ("⚙️ SETUP (/hud_setup)", "/hud_setup", "#555"),
+            ("⚡ INIT (/hud_init)", "/hud_init", "#555"),
+            ("🐞 DEBUG (/hud_debug)", "/hud_debug", "#777")
+        ]
+        
+        for txt, alias_cmd, bg in m_btns:
+            tk.Button(alias_lbl, text=txt, 
+                      command=lambda c=alias_cmd: self.copy_command(c), 
+                      bg=bg, fg="white", font=("Consolas", 9, "bold")).pack(side=tk.LEFT, padx=5, pady=5)
+
+        # --- SYSTEM ---
+        sys_frame = tk.Frame(self.tab_hud, bg="#0a0a0a")
+        sys_frame.pack(fill=tk.X, padx=10, pady=5)
+        tk.Button(sys_frame, text="🔔 TEST NTFY", command=self.test_ntfy, bg="#333", fg="#FFA500", font=("Consolas", 9)).pack(side=tk.LEFT)
+        tk.Button(sys_frame, text="⚙️ SETTINGS", command=self.open_settings, bg="#555", fg="#fff", font=("Consolas", 9)).pack(side=tk.RIGHT)
+        tk.Button(sys_frame, text="♻️ RELOAD", command=self.reload_parser, bg="#444", fg="#00ffff", font=("Consolas", 9, "bold")).pack(side=tk.RIGHT, padx=5)
+
+        # Logs
         log_frame = tk.LabelFrame(self.tab_hud, text=" SYSTEM LOGS ", bg="#0a0a0a", fg="#00ff00")
         log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.log_txt = tk.Text(log_frame, bg="#050505", fg="#00ff00", font=("Consolas", 9), state='disabled')
@@ -362,10 +408,70 @@ class UniversalHUD(tk.Tk):
         self.status_bar = tk.Label(self.tab_hud, textvariable=self.status_var, bg="#333", fg="white", font=("Consolas", 10, "bold"), pady=5)
         self.status_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
+    def check_system_health(self):
+        self.log("--- SYSTEM HEALTH CHECK ---")
+        issues = []
+        
+        # 1. Bridge Dir
+        if os.path.exists(self.bridge_dir):
+            self.log(f"[PASS] Bridge Dir: {self.bridge_dir}")
+        else:
+            self.log(f"[FAIL] Bridge Dir missing: {self.bridge_dir}")
+            issues.append("Bridge Directory not found")
+
+        # 2. Queue Link (Critical for Netsplit)
+        if os.path.exists(self.link_file):
+            with open(self.link_file, 'r') as f:
+                link = f.read().strip()
+            if link.startswith("http"):
+                mtime = os.path.getmtime(self.link_file)
+                age_mins = int((time.time() - mtime) / 60)
+                self.log(f"[PASS] Auto-Queue Link: READY ({age_mins}m old)")
+                self.log(f"       -> {link}")
+            else:
+                self.log("[FAIL] Auto-Queue Link: Invalid or Empty")
+                issues.append("Queue Link is invalid")
+        else:
+            self.log("[FAIL] Auto-Queue Link: NOT SAVED")
+            issues.append("No Speedtest Link saved (Run Auto-Test!)")
+
+        # 3. Log File
+        if os.path.exists(self.irc_log) and os.path.isfile(self.irc_log):
+             self.log(f"[PASS] Log Parser: Connected to {os.path.basename(self.irc_log)}")
+        else:
+             self.log(f"[WARN] Log Parser: File not found ({self.irc_log})")
+             issues.append("Log file path invalid")
+
+        # 4. Bot Name
+        if self.bot_name:
+             self.log(f"[PASS] Target Bot: {self.bot_name}")
+        else:
+             self.log("[FAIL] Target Bot: Not configured")
+             issues.append("Bot Name missing in Settings")
+
+        self.log("-" * 30)
+        
+        if not issues:
+            self.log("✅ SYSTEM STATUS: GREEN (READY)")
+            self.status_var.set("SYSTEM HEALTH: 100% READY")
+            self.status_bar.config(bg="#00ff00", fg="black")
+            messagebox.showinfo("System Check", "All Systems Go!\n\nIf a netsplit occurs, mIRC will find the saved link and auto-queue.")
+        else:
+            self.log(f"❌ SYSTEM STATUS: RED ({len(issues)} Issues)")
+            self.status_var.set("SYSTEM HEALTH: ACTION REQUIRED")
+            self.status_bar.config(bg="red", fg="white")
+            messagebox.showwarning("System Check", "Issues Detected:\n- " + "\n- ".join(issues))
+
+    def copy_command(self, cmd_text):
+        """Helper to copy any text to clipboard and focus client"""
+        self.clipboard_clear()
+        self.clipboard_append(cmd_text)
+        self.focus_client()
+        self.log(f"COPIED: {cmd_text}")
+
     def create_intel_widgets(self):
         frame = tk.Frame(self.tab_intel, bg="#0a0a0a", padx=20, pady=20)
         frame.pack(fill=tk.BOTH, expand=True)
-
         header = tk.Frame(frame, bg="#0a0a0a")
         header.pack(fill=tk.X, pady=(0, 20))
         tk.Label(header, text="INTERVIEW ANALYTICS (24H)", bg="#0a0a0a", fg="#00ff00", font=("Consolas", 16, "bold")).pack(side=tk.LEFT)
@@ -373,25 +479,19 @@ class UniversalHUD(tk.Tk):
         btn_box.pack(side=tk.RIGHT)
         tk.Button(btn_box, text="🗑️ RESET DATA", command=self.reset_db, bg="#550000", fg="#ff9999", font=("Consolas", 10, "bold")).pack(side=tk.RIGHT, padx=5)
         tk.Button(btn_box, text="🔄 IMPORT HISTORY", command=self.import_history, bg="#333", fg="#00ffff", font=("Consolas", 10, "bold")).pack(side=tk.RIGHT, padx=5)
-
         stats_grid = tk.Frame(frame, bg="#0a0a0a")
         stats_grid.pack(fill=tk.X)
-
         def add_intel_box(title, var, color):
             container = tk.Frame(stats_grid, bg="#111", padx=10, pady=10)
             container.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
             tk.Label(container, text=title, bg="#111", fg="#888").pack()
             tk.Label(container, textvariable=var, bg="#111", fg=color, font=("Consolas", 24, "bold")).pack()
-
         self.stat_total = tk.StringVar(value="0")
         add_intel_box("TOTAL INTERVIEWS", self.stat_total, "#00ffff")
-        
         self.stat_busy = tk.StringVar(value="--:--")
         add_intel_box("BUSIEST HOUR", self.stat_busy, "#ff00ff")
-        
         self.stat_outcomes = tk.StringVar(value="P:0 F:0 M:0")
         add_intel_box("OUTCOMES", self.stat_outcomes, "#ffff00")
-
         tk.Label(frame, text="RECENTLY STARTED", bg="#0a0a0a", fg="#00ff00", font=("Consolas", 12, "bold")).pack(pady=(30, 10), anchor="w")
         self.recent_list = tk.Listbox(frame, bg="#111", fg="#00ff00", font=("Consolas", 10), height=15, relief=tk.FLAT)
         self.recent_list.pack(fill=tk.BOTH, expand=True)
@@ -437,8 +537,7 @@ class UniversalHUD(tk.Tk):
             if "Currently interviewing:" in line:
                 parts = line.split("Currently interviewing:", 1)[1].strip()
                 return parts.split(":::")[0].strip() if ":::" in parts else parts.split()[0]
-            else:
-                return line.split("Now interviewing:", 1)[1].strip().split()[0]
+            else: return line.split("Now interviewing:", 1)[1].strip().split()[0]
         except: return None
 
     def _extract_outcome(self, line):
@@ -463,8 +562,7 @@ class UniversalHUD(tk.Tk):
             for item in stats['recent']:
                 ts = datetime.fromisoformat(item['timestamp']).strftime('%H:%M')
                 self.recent_list.insert(tk.END, f"[{ts}] {item['username']}")
-        except Exception as e:
-            print(f"Intel Error: {e}")
+        except Exception as e: print(f"Intel Error: {e}")
 
     def log(self, msg):
         self.log_txt.config(state='normal')
@@ -478,14 +576,23 @@ class UniversalHUD(tk.Tk):
 
     def _ntfy_thread(self, title, message, priority):
         try:
-            requests.post(f"https://ntfy.sh/{self.ntfy_topic}", data=message.encode('utf-8'), headers={"Title": title, "Priority": priority})
+            # FIX: Automatic Retry logic for SSL/Network issues
+            session = requests.Session()
+            retries = Retry(total=3, backoff_factor=1, status_forcelist=[502, 503, 504])
+            session.mount('https://', HTTPAdapter(max_retries=retries))
+            
+            session.post(
+                f"https://ntfy.sh/{self.ntfy_topic}", 
+                data=message.encode('utf-8'), 
+                headers={"Title": title, "Priority": priority},
+                timeout=10
+            )
             self.log(f"Ntfy Sent: {title}")
         except Exception as e:
             self.log(f"Ntfy Error: {e}")
 
     def focus_client(self):
-        if not focus_window(self.client_title):
-            self.log(f"ERROR: Window '{self.client_title}' not found.")
+        if not focus_window(self.client_title): self.log(f"ERROR: Window '{self.client_title}' not found.")
 
     def save_manual_link(self):
         url = self.link_entry.get().strip()
@@ -519,17 +626,14 @@ class UniversalHUD(tk.Tk):
                 info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 info.wShowWindow = 0
                 flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-                
                 with open(self.st_json, "w") as out:
                     subprocess.run([exe, "--accept-license", "--accept-gdpr", "--format=json"], cwd=self.bridge_dir, stdout=out, stderr=subprocess.PIPE, creationflags=flags, startupinfo=info)
-                
                 self.log("ENGINE: Speedtest finished.")
                 if auto_copy: 
                     self.after(0, self.copy_queue_cmd)
                     self.after(0, lambda: self.status_var.set("TEST COMPLETE - COPIED"))
                     self.after(0, lambda: self.status_bar.config(bg="#00ff00"))
-            except Exception as e:
-                self.log(f"Engine Error: {e}")
+            except Exception as e: self.log(f"Engine Error: {e}")
         threading.Thread(target=_bg, daemon=True).start()
 
     def test_ntfy(self):
@@ -567,6 +671,13 @@ class UniversalHUD(tk.Tk):
         self.clipboard_append(cmd)
         self.log(f"COPIED: {cmd}")
         self.focus_client()
+        # Thread-safe GUI update
+        self.after(0, lambda u=url: self._update_link_ui(u))
+
+    def _update_link_ui(self, url):
+        self.link_entry.delete(0, tk.END)
+        self.link_entry.insert(0, url)
+        self.save_manual_link()
 
     def flash_alert(self):
         bg = self.cget("bg")
@@ -639,6 +750,11 @@ class UniversalHUD(tk.Tk):
         line_lower = line.lower()
         bot_lower = self.bot_name.lower()
         
+        # Get Priorities from Config
+        prio_queue = self.config.get("prio_queue", "low")
+        prio_netsplit = self.config.get("prio_netsplit", "high")
+        prio_mention = self.config.get("prio_mention", "urgent")
+
         if bot_lower in line_lower:
             m1 = RE_POSITION.search(line)
             if m1:
@@ -658,32 +774,29 @@ class UniversalHUD(tk.Tk):
                     if user:
                         self.db.record_event(user, "started")
                         self.log(f"STATS: Interview started ({user})")
-                        self.send_ntfy("Queue Moving", f"{user} is being interviewed", "low")
+                        self.send_ntfy("Queue Moving", f"{user} is being interviewed", prio_queue)
                         self.after(0, self.update_intel)
 
         # Detect MASS KICK (Potential Netsplit)
         if RE_KICK.search(line):
             now = time.time()
-            # Clean old kicks (>5s ago)
             self.kick_counter = [t for t in self.kick_counter if now - t < 5]
             self.kick_counter.append(now)
             
-            # If 3+ kicks in 5 seconds -> NETSPLIT ALERT
             if len(self.kick_counter) >= 3 and live and (now - self.last_netsplit_alert > 60):
                 self.last_netsplit_alert = now
                 self.log("PARSER: MASS KICK DETECTED! (Possible Netsplit)")
-                self.send_ntfy("NETSPLIT ALERT", "Mass Kicks Detected! Queue stability risk.", "high")
+                self.send_ntfy("NETSPLIT ALERT", "Mass Kicks Detected! Queue stability risk.", prio_netsplit)
                 self.status_bar.config(bg="orange", fg="black")
                 self.status_var.set("ALERT: MASS KICK EVENT DETECTED")
 
         if RE_NETSPLIT.search(line):
             self.netsplit_count += 1
             self.ns_var.set(str(self.netsplit_count))
-            
             if live and (time.time() - self.last_netsplit_alert > 60):
                 self.last_netsplit_alert = time.time()
                 self.log("PARSER: Netsplit detected! Sending Alert...")
-                self.send_ntfy("NETSPLIT ALERT", "A Netsplit just occurred! Check your queue status.", "high")
+                self.send_ntfy("NETSPLIT ALERT", "A Netsplit just occurred! Check your queue status.", prio_netsplit)
             elif live:
                 self.log("PARSER: Netsplit detected (Alert Cooldown)")
 
@@ -691,15 +804,28 @@ class UniversalHUD(tk.Tk):
             if f"<{self.user_nick.lower()}>" not in line_lower:
                 if live:
                     self.log("!!! MENTION DETECTED !!!")
-                    self.send_ntfy("MENTION ALERT", f"You were mentioned in {self.client_title}", "urgent")
+                    self.send_ntfy("MENTION ALERT", f"You were mentioned in {self.client_title}", prio_mention)
                     self.after(0, self.flash_alert)
 
     def start_monitoring(self):
         def monitor():
             self.log("MONITOR: Active")
             while True:
-                time.sleep(2)
+                time.sleep(1) 
                 try:
+                    # Clipboard Monitor
+                    try:
+                        curr_clip = self.clipboard_get()
+                        # OPTIMIZATION: Check length to prevent freeze on large copy
+                        if len(curr_clip) < 500:
+                            if curr_clip != self.last_clipboard:
+                                if "speedtest.net/result/" in curr_clip:
+                                    self.last_clipboard = curr_clip
+                                    # Thread-safe GUI update
+                                    self.after(0, lambda c=curr_clip: self._update_link_ui(c))
+                    except Exception: pass
+
+                    # ... (rest of monitoring loop) ...
                     if int(time.time()) % 30 == 0:
                         self.after(0, self.update_intel)
                         rate = self.db.get_velocity(3)
@@ -711,11 +837,12 @@ class UniversalHUD(tk.Tk):
                         else:
                             self.eta_var.set("Stalled")
 
+                    prio_top5 = self.config.get("prio_top5", "high")
                     if self.current_rank <= 5:
                         self.pos_lbl.config(fg="#ff0000")
                         self.status_bar.config(bg="red", fg="white")
                         if not self.top5_alert_sent:
-                            self.send_ntfy("Top 5 Alert", "You are in the Top 5! Get ready.", "high")
+                            self.send_ntfy("Top 5 Alert", "You are in the Top 5! Get ready.", prio_top5)
                             self.top5_alert_sent = True
                     else:
                         self.pos_lbl.config(fg="#00ff00")
@@ -725,6 +852,12 @@ class UniversalHUD(tk.Tk):
 
                 except Exception: pass
         threading.Thread(target=monitor, daemon=True).start()
+
+    def _update_link_ui(self, url):
+        self.link_entry.delete(0, tk.END)
+        self.link_entry.insert(0, url)
+        self.save_manual_link()
+        self.log("CLIPBOARD: Auto-captured Speedtest Link")
 
 if __name__ == "__main__":
     app = UniversalHUD()
