@@ -4,14 +4,14 @@ a desktop companion utility for users waiting in IRC interview queues. it acts a
 <img width="668" height="551" alt="Screenshot 2026-01-22 224125" src="https://github.com/user-attachments/assets/674416d0-4ffd-4ff0-a7d8-c4e71ad9effc" />
 
 
-**Features**
+**features**
 
 * queue monitoring: displays your current queue position in real-time.  
-* wait time estimates: calculates queue "Velocity" (interviews per hour) and provides an ETA.  
+* wait time estimates: calculates queue "velocity" (interviews per hour) and provides an ETA.  
 * automated speedtests: runs the Ookla Speedtest CLI in the background and generates a valid \!queue link (supporting both legacy numeric IDs and modern UUIDs) without manual copy-pasting.  
 * push notifications: Integrates with **ntfy.sh** to send alerts to your phone when:  
-  * you reach the Top 5 positions.  
+  * you reach the top 5 positions.  
   * the queue starts moving (someone gets interviewed).  
   * you're mentioned in the IRC channel.  
 * analytics: automatically logs interview events to track busy hours, total interviews per day, and pass/fail rates.  
-* connection recovery: detects netsplits (server disconnects) and automates the re-queueing process when the bot returns.
+* connection recovery: detects netsplits (server disconnects) and automates the requeueing process when the bot returns.
